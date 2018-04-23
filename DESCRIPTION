@@ -1,9 +1,8 @@
 Package: stansurv
 Type: Package
 Title: Bayesian Survival Analysis using 'Stan'
-Version: 0.0.0-9000
-Author@R: c(person("Sam", "Brilleman", 
-                   email = "sam.brilleman@monash.edu" 
+Version: 0.1.0-9000
+Author@R: c(person("Sam", "Brilleman", email = "sam.brilleman@monash.edu" 
 						    	 role = c("cre", "aut")))
 Description: Fit Bayesian survival (i.e. time-to-event ) models 
     with the back-end estimation carried out using 'Stan'. The 
@@ -19,6 +18,9 @@ Imports:
     stats,
     survival (>= 2.40.1),
     utils
+LinkingTo: StanHeaders (>= 2.17.1), rstan (>= 2.17.2), BH (>= 1.65.0), Rcpp (>=
+    0.12.0), RcppEigen (>= 0.3.3.3.0)
+SystemRequirements: GNU make
 NeedsCompilation: yes
 VignetteBuilder: knitr
 BugReports: https://github.com/sambrilleman/stansurv/issues
