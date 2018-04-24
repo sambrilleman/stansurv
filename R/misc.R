@@ -1,3 +1,48 @@
+# Calculate restricted cubic spline basis terms
+#
+# @param x A vector of times at which to evaluate the basis.
+rcs <- function(x, df = 3, knots, boundary_knots = NULL) {
+
+  if (is.null(boundary_knots)) {
+    k_min <- min(x)
+    k_max <- max(x)
+  } else {
+    k_min <- boundary_knots[1L]
+    k_min <- boundary_knots[2L]
+  }
+
+  if (df < 1) {
+    stop2("'df' must be positive.")
+  }
+
+  if (missing(knots)) { # user did not specify knots
+    n_knots <- df - 1
+    if (n_knots > 0) {
+      probs <- seq(n_knots - 1) / n_knots
+      knots <- quantile(x, probs = probs)
+    } else {
+      knots <- NULL
+    }
+  } else { # user did specify knots
+    n_knots <- length(knots)
+    df <- knots + 1
+    if (any(knots < k_min) || any(knots > k_max)) {
+      stop2("'knots' cannot be outside the boundary knots.")
+    }
+  }
+
+  lambda_j <-
+}
+
+# Calculate the derivative of restricted cubic spline basis terms
+#
+# @param x A vector of times at which to evaluate the derivative of the basis.
+drcs <- function(x) {
+
+}
+
+
+
 # Return a list (or vector if unlist = TRUE) which
 # contains the embedded elements in list x named y
 fetch <- function(x, y, z = NULL, zz = NULL, null_to_zero = FALSE,
