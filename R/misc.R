@@ -1,47 +1,100 @@
-# Calculate restricted cubic spline basis terms
+# Set arguments for sampling
 #
-# @param x A vector of times at which to evaluate the basis.
-rcs <- function(x, df = 3, knots, boundary_knots = NULL) {
+# Prepare a list of arguments to use with \code{rstan::sampling} via
+# \code{do.call}.
+#
+# @param object The stanfit object to use for sampling.
+# @param user_dots The contents of \code{...} from the user's call to
+#   the \code{stan_*} modeling function.
+# @param user_adapt_delta The value for \code{adapt_delta} specified by the
+#   user.
+# @param prior Prior distribution list (can be NULL).
+# @param ... Other arguments to \code{\link[rstan]{sampling}} not coming from
+#   \code{user_dots} (e.g. \code{data}, \code{pars}, \code{init}, etc.)
+# @return A list of arguments to use for the \code{args} argument for
+#   \code{do.call(sampling, args)}.
+set_sampling_args <- function(object, prior, user_dots = list(),
+                              user_adapt_delta = NULL, ...) {
+  args <- list(object = object, ...)
+  unms <- names(user_dots)
+  for (j in seq_along(user_dots)) {
+    args[[unms[j]]] <- user_dots[[j]]
+  }
+  defaults <- default_stan_control(prior = prior, adapt_delta = user_adapt_delta)
 
-  if (is.null(boundary_knots)) {
-    k_min <- min(x)
-    k_max <- max(x)
+  if (!"control" %in% unms) {
+    # no user-specified 'control' argument
+    args$control <- defaults
   } else {
-    k_min <- boundary_knots[1L]
-    k_min <- boundary_knots[2L]
-  }
-
-  if (df < 1) {
-    stop2("'df' must be positive.")
-  }
-
-  if (missing(knots)) { # user did not specify knots
-    n_knots <- df - 1
-    if (n_knots > 0) {
-      probs <- seq(n_knots - 1) / n_knots
-      knots <- quantile(x, probs = probs)
+    # user specifies a 'control' argument
+    if (!is.null(user_adapt_delta)) {
+      # if user specified adapt_delta argument to stan_* then
+      # set control$adapt_delta to user-specified value
+      args$control$adapt_delta <- user_adapt_delta
     } else {
-      knots <- NULL
+      # use default adapt_delta for the user's chosen prior
+      args$control$adapt_delta <- defaults$adapt_delta
     }
-  } else { # user did specify knots
-    n_knots <- length(knots)
-    df <- knots + 1
-    if (any(knots < k_min) || any(knots > k_max)) {
-      stop2("'knots' cannot be outside the boundary knots.")
+    if (is.null(args$control$max_treedepth)) {
+      # if user's 'control' has no max_treedepth set it to rstanarm default
+      args$control$max_treedepth <- defaults$max_treedepth
     }
   }
+  args$save_warmup <- FALSE
 
-  lambda_j <-
+  return(args)
 }
 
-# Calculate the derivative of restricted cubic spline basis terms
+# Default control arguments for sampling
 #
-# @param x A vector of times at which to evaluate the derivative of the basis.
-drcs <- function(x) {
-
+# Called by set_sampling_args to set the default 'control' argument for
+# \code{rstan::sampling} if none specified by user. This allows the value of
+# \code{adapt_delta} to depend on the prior.
+#
+# @param prior Prior distribution list (can be NULL).
+# @param adapt_delta User's \code{adapt_delta} argument.
+# @param max_treedepth Default for \code{max_treedepth}.
+# @return A list with \code{adapt_delta} and \code{max_treedepth}.
+default_stan_control <- function(prior, adapt_delta = NULL,
+                                 max_treedepth = 15L) {
+  if (!length(prior)) {
+    if (is.null(adapt_delta)) adapt_delta <- 0.95
+  } else if (is.null(adapt_delta)) {
+    adapt_delta <- switch(prior$dist,
+                          "R2" = 0.99,
+                          "hs" = 0.99,
+                          "hs_plus" = 0.99,
+                          "lasso" = 0.99,
+                          "product_normal" = 0.99,
+                          0.95) # default
+  }
+  nlist(adapt_delta, max_treedepth)
 }
 
+# Check whether a vector/matrix/array contains an "(Intercept)"
+check_for_intercept <- function(x, logical = FALSE) {
+  nms <- if (is.matrix(x)) colnames(x) else names(x)
+  sel <- which("(Intercept)" %in% nms)
+  if (logical) as.logical(length(sel)) else sel
+}
 
+# Drop intercept from a vector/matrix/array of named coefficients
+drop_intercept <- function(x) {
+  sel <- check_for_intercept(x)
+  if (length(sel) && is.matrix(x)) {
+    x[, -sel, drop = FALSE]
+  } else if (length(sel)) {
+    x[-sel]
+  } else {
+    x
+  }
+}
+
+# Return intercept from a vector/matrix/array of named coefficients
+return_intercept <- function(x) {
+  sel <- which("(Intercept)" %in% names(x))
+  if (length(sel)) x[sel] else NULL
+}
 
 # Return a list (or vector if unlist = TRUE) which
 # contains the embedded elements in list x named y
@@ -125,7 +178,7 @@ rhs <- function(x, as_formula = FALSE) {
 # @param x A character string or expression object
 # @param as_formula Logical. If TRUE then the result is reformulated.
 reformulate_lhs <- function(x) {
-  x <- deparse(x, 500L)
+  #x <- deparse(x, 500L)
   x <- formula(substitute(LHS ~ 1, list(LHS = x)))
   x
 }
@@ -135,8 +188,8 @@ reformulate_lhs <- function(x) {
 # @param x A formula object
 # @param as_formula Logical. If TRUE then the result is reformulated.
 reformulate_rhs <- function(x) {
-  x <- deparse(x, 500L)
-  x <- formula(substitute(~ RHS, list(RHS = out)))
+  #x <- deparse(x, 500L)
+  x <- formula(substitute(~ RHS, list(RHS = x)))
   x
 }
 
@@ -186,7 +239,22 @@ maybe_broadcast <- function(x, n) {
   }
 }
 
+# Paste items, collapsed together using a comma
+comma <- function(x) {
+  paste(x, collapse = ", ")
+}
+
 # Check if object is a list (ensuring FALSE for data frames)
 is_list <- function(x) {
   is(x, "list")
+}
+
+# Error without printing call
+stop2 <- function(...) {
+  stop(..., call. = FALSE)
+}
+
+# Warning without printing call
+warning2 <- function(...) {
+  warning(..., call. = FALSE)
 }

@@ -35,7 +35,7 @@ validate_arg <- function(arg, type, return_list = FALSE,
     ok_dists <- list(...)$ok_dists
     check <- sapply(arg, function(x) x %in% ok_dists)
     if (!all(check))
-      stop2("Argument 'dist' must be one of: ", paste(ok_dists, collapse = ", "))
+      stop2("Argument '", nm, "' must be one of: ", paste(ok_dists, collapse = ", "))
   }
 
   if (!is.null(validate_length)) {
@@ -53,25 +53,95 @@ validate_arg <- function(arg, type, return_list = FALSE,
   out
 }
 
-
-
 # Parse the model formula
 #
-# @param formula
-parse_formula <- function(formula) {
+# @param formula The user input to the formula argument.
+# @param data The user input to the data argument (i.e. a data frame).
+parse_formula <- function(formula, data) {
 
-  flhs <- lhs(formula)
-  frhs <- rhs(formula)
+  formula <- validate_formula(formula, needs_response = TRUE)
 
-  if (!inherits(flhs, "Surv")) {
-    stop2("LHS of formula must be a 'Surv' object.")
+  lhs <- lhs(formula) # full LHS of formula
+  rhs <- rhs(formula) # full RHS of formula
+
+  lhs_form <- reformulate_lhs(lhs)
+  rhs_form <- reformulate_rhs(rhs)
+
+  allvars <- all.vars(formula)
+  allvars_form <- reformulate(allvars)
+
+  surv <- eval(lhs, envir = data) # Surv object
+  surv <- validate_surv(surv)
+  type <- attr(surv, "type")
+
+  if (type == "right") {
+    tvar_beg <- NULL
+    tvar_end <- as.character(lhs[[2L]])
+    dvar     <- as.character(lhs[[3L]])
+  } else if (type == "counting") {
+    tvar_beg <- as.character(lhs[[2L]])
+    tvar_end <- as.character(lhs[[3L]])
+    dvar     <- as.character(lhs[[4L]])
   }
 
-  nlist(lhs = flhs, rhs = frhs, all_vars = x)
+  nlist(lhs = lhs,
+        rhs = rhs,
+        lhs_form = lhs_form,
+        rhs_form = rhs_form,
+        fe_form = rhs_form, # no re terms accommodated yet
+        re_form = NULL,     # no re terms accommodated yet
+        allvars = allvars,
+        allvars_form = allvars_form,
+        tvar_beg = tvar_beg,
+        tvar_end = tvar_end,
+        dvar = dvar,
+        surv_type = attr(surv, "type"))
 }
 
+# Check formula object
+#
+# @param formula The user input to the formula argument.
+# @param needs_response A logical; if TRUE then formula must contain a LHS.
+validate_formula <- function(formula, needs_response = TRUE) {
 
-# Return the response variable (time)
+  if (!inherits(formula, "formula")) {
+    stop2("'formula' must be a formula.")
+  }
+
+  if (needs_response) {
+    len <- length(formula)
+    if (len < 3) {
+      stop2("'formula' must contain a response.")
+    }
+  }
+  as.formula(formula)
+}
+
+# Check object is a Surv object with a valid type
+#
+# @param x A Surv object; the LHS of a formula evaluated in a data frame environment.
+# @param ok_types A character vector giving the allowed types of Surv object.
+validate_surv <- function(x, ok_types = c("right", "counting")) {
+
+  if (!inherits(x, "Surv")) {
+    stop2("LHS of 'formula' must be a 'Surv' object.")
+  }
+
+  if (!attr(x, "type") %in% ok_types) {
+    stop2("Surv object type must be one of: ", comma(ok_types))
+  }
+  x
+}
+
+make_dist_for_stan <- function(dist) {
+  switch(dist,
+         exponential = 1L,
+         weibull     = 2L,
+         fpm         = 3L,
+         NULL)
+}
+
+# Return the response vector (time)
 #
 # @param formula The parsed model formula.
 # @param data The model frame.
@@ -101,7 +171,7 @@ make_t_for_stan <- function(formula, data, type = c("beg", "end", "gap")) {
   out
 }
 
-# Return the response variable (status indicator)
+# Return the response vector (status indicator)
 #
 # @param formula The parsed model formula.
 # @param data The model frame.
@@ -113,7 +183,7 @@ make_d_for_stan <- function(formula, data) {
   } else if (formula$surv_type == "counting") {
     out <- data[[formula$dvar]]
   } else {
-    stop2("Cannot yet handle '", formula$surv_type, "' type Surv objects.")
+    stop2("Bug found: cannot handle '", formula$surv_type, "' Surv objects.")
   }
   out
 }
@@ -134,16 +204,27 @@ make_x_for_stan <- function(formula, data) {
 
   x <- model.matrix(formula$fe_form, data)
   x <- drop_intercept(x)
-  x_bar <- colMeans(x)
-  xtemp <- sweep(xtemp, 2, x_bar, FUN = "-")
+  xbar <- colMeans(x)
 
   # identify any column of x with < 2 unique values (empty interaction levels)
-  sel <- (apply(xtemp, 2L, n_distinct) < 2)
+  sel <- (apply(x, 2L, n_distinct) < 2)
   if (any(sel)) {
     cols <- paste(colnames(x)[sel], collapse = ", ")
     stop2("Cannot deal with empty interaction levels found in columns: ", cols)
   }
 
-  nlist(x, x_bar, N = NROW(x), K = NCOL(x))
+  nlist(x, xbar, N = NROW(x), K = NCOL(x))
 }
 
+# Return the list of pars for Stan to monitor
+#
+# @param standata The list of data to pass to Stan.
+# @return A character vector
+pars_to_monitor <- function(standata) {
+  c(if (standata$K > 0) "beta",
+    if (standata$dist == 1) "exp_scale",
+    if (standata$dist == 2) "wei_shape",
+    if (standata$dist == 2) "wei_scale",
+    if (standata$dist == 3) "fpm_coefs",
+    "mean_PPD")
+}

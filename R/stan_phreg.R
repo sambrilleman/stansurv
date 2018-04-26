@@ -102,7 +102,7 @@
 #'         chains = 1, cores = 1, seed = 12345, iter = 1000)
 #' }
 #'
-stan_haz <- function(formula, data, dist = "weibull", df = 3,
+stan_phreg <- function(formula, data, dist = "weibull",
                      priors = list(), prior_PD = FALSE,
                      algorithm = c("sampling", "meanfield", "fullrank"),
                      adapt_delta = 0.95, max_treedepth = 11L,
