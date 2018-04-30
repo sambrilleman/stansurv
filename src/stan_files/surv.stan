@@ -106,23 +106,53 @@ functions {
     }
 */    /* else prior_dist is 0 and nothing is added */
   }
+	
+  /**
+  * Log-prior for baseline hazard parameters
+  *
+  * @param aux_unscaled Vector or real, the unscaled auxiliary parameter(s)
+  * @param dist Integer specifying the type of prior distribution
+  * @param df Vector or real specifying the df for the prior distribution
+  * @return nothing
+  */
+  void aux_lp(real aux_unscaled, int dist, real df) {
+    if (dist > 0) {
+      if (dist == 1)
+        target += normal_lpdf(aux_unscaled | 0, 1);
+      else if (dist == 2)
+        target += student_t_lpdf(aux_unscaled | df, 0, 1);
+      else
+        target += exponential_lpdf(aux_unscaled | 1);
+    }
+  }
+
+  void aux_vec_lp(vector aux_unscaled, int dist, vector df) {
+    if (dist > 0) {
+      if (dist == 1)
+        target += normal_lpdf(aux_unscaled | 0, 1);
+      else if (dist == 2)
+        target += student_t_lpdf(aux_unscaled | df, 0, 1);
+      else
+        target += exponential_lpdf(aux_unscaled | 1);
+    }
+  }		
 
 }
 
 data {
 
   // data for event model
-  int<lower=0> K;             // num. cols in predictor matrix
-  int<lower=0> nrows;         // num. rows in predictor matrix
-  int<lower=0> npats;         // num. individuals
-  int<lower=0> nevents;       // num. events (ie. not censored)
-  int<lower=0> df;            // df for baseline hazard
-  int<lower=0> df_tde[K];     // df for time-dependent hazard ratios
-  vector[nrows] t_beg;        // beg time for each row of data
-  vector[nrows] t_end;        // end time for each row of data
-  vector[nrows] t_gap;        // gap time for each row of data
-  vector[nrows] d;            // event indicator for each row of data
-  matrix[K > 0 ? nrows : 0, K] x; // predictor matrix
+  int<lower=0> K;              // num. cols in predictor matrix
+  int<lower=0> nrows;          // num. rows in predictor matrix
+  int<lower=0> npats;          // num. individuals
+  int<lower=0> nevents;        // num. events (ie. not censored)
+  int<lower=0> df;             // df for baseline hazard
+  int<lower=0> df_tde[K];      // df for time-dependent hazard ratios
+  vector[nrows] t_beg;         // beg time for each row of data
+  vector[nrows] t_end;         // end time for each row of data
+  vector[nrows] t_gap;         // gap time for each row of data
+  vector[nrows] d;             // event indicator for each row of data
+  matrix[nrows,K] x;           // predictor matrix
   matrix[nrows,df] fpm_x_beg;  // design matrix (fpm basis terms)
   matrix[nrows,df] fpm_x_end;  // design matrix (fpm basis terms)
   matrix[nrows,df] fpm_dx_beg; // design matrix (deriv of fpm basis terms)
@@ -289,8 +319,18 @@ model {
 
 	// log priors for coefficients
 	beta_lp(z_beta, prior_dist, prior_sd, prior_df, global_prior_df,
-	        local, global, mix, ool, slab_df, caux);
-
+	        local, global, mix, ool, slab_df, caux);												 
+												 
 	// log priors for baseline hazard parameters
-
+  if (dist == 1) { // exponential model
+    aux_lp(z_exp_scale[1], prior_dist_for_exp_scale, prior_df_for_exp_scale);
+	}
+	else if (dist == 2) { // weibull model
+    aux_lp(z_wei_shape[1], prior_dist_for_wei_shape, prior_df_for_wei_shape);
+    aux_lp(z_wei_scale[1], prior_dist_for_wei_scale, prior_df_for_wei_scale);
+	}
+	else if (dist == 3) { // fpm model
+    aux_vec_lp(z_fpm_coefs[1], prior_dist_for_fpm_coefs, prior_df_for_fpm_coefs);
+	}
+	
 }

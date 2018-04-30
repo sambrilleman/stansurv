@@ -45,7 +45,7 @@ rcs <- function(x, df = 3, iknots = NULL, bknots = NULL) {
 
   lambdas <- (bknots[2] - iknots) / (bknots[2] - bknots[1])
 
-  rcs <- lapply(1:df, function(i) {
+  rcs <- uapply(1:df, function(i) {
     if (i == 1) {
       out <- x
     } else {
@@ -73,7 +73,7 @@ drcs <- function(x, df = 3, iknots, bknots = NULL) {
 
   lambdas <- (bknots[2] - iknots) / (bknots[2] - bknots[1])
 
-  drcs <- lapply(1:df, function(i) {
+  drcs <- uapply(1:df, function(i) {
     if (i == 1) {
       out <- rep(1, length(x))
     } else {

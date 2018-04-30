@@ -2,5 +2,6 @@
 
 export(drcs)
 export(rcs)
-export(stan_fpm)
 export(stan_phreg)
+export(stan_surv)
+useDynLib(stansurv, .registration = TRUE)

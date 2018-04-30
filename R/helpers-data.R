@@ -133,12 +133,16 @@ validate_surv <- function(x, ok_types = c("right", "counting")) {
   x
 }
 
-make_dist_for_stan <- function(dist) {
+# Switch survival distribution for integer used internally by Stan
+#
+# @param dist Character string specifying the survival distribution.
+# @return An integer, or NA if unmatched.
+surv_dist_for_stan <- function(dist) {
   switch(dist,
          exponential = 1L,
          weibull     = 2L,
          fpm         = 3L,
-         NULL)
+         NA)
 }
 
 # Return the response vector (time)
@@ -225,6 +229,6 @@ pars_to_monitor <- function(standata) {
     if (standata$dist == 1) "exp_scale",
     if (standata$dist == 2) "wei_shape",
     if (standata$dist == 2) "wei_scale",
-    if (standata$dist == 3) "fpm_coefs",
-    "mean_PPD")
+    if (standata$dist == 3) "fpm_coefs")
 }
+

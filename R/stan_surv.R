@@ -102,11 +102,12 @@
 #'         chains = 1, cores = 1, seed = 12345, iter = 1000)
 #' }
 #'
-stan_fpm <- function(formula, data, dist = "fpm", df = 3, iknots = NULL, bknots = NULL,
-                     priors = list(), prior_PD = FALSE,
-                     algorithm = c("sampling", "meanfield", "fullrank"),
-                     adapt_delta = 0.95, max_treedepth = 11L,
-                     init = "random", ...) {
+stan_surv <- function(formula, data, dist = "fpm",
+                      df = 3, iknots = NULL, bknots = NULL,
+                      prior = normal(), prior_aux = list(), prior_PD = FALSE,
+                      algorithm = c("sampling", "meanfield", "fullrank"),
+                      adapt_delta = 0.95, max_treedepth = 11L,
+                      init = "random", ...) {
 
   #-----------------------------
   # Pre-processing of arguments
@@ -134,8 +135,10 @@ stan_fpm <- function(formula, data, dist = "fpm", df = 3, iknots = NULL, bknots 
   # model data frame
   mf <- data
 
+  #----- dimensions, response, predictor matrix
+
   # survival time distribution
-  standata$dist <- make_dist_for_stan(dist)
+  standata$dist <- surv_dist_for_stan(dist)
 
   # time variable for each row of data
   standata$t_beg <- make_t_for_stan(formula, mf, type = "beg") # beg time
@@ -144,23 +147,6 @@ stan_fpm <- function(formula, data, dist = "fpm", df = 3, iknots = NULL, bknots 
 
   # event indicator for each row of data
   standata$d <- make_d_for_stan(formula, mf)
-
-  # uncensored event times
-  tt <- standata$t_end[standata$d == 1]
-
-  # knot locations for fpm baseline hazard
-  knots <- get_knots(tt, df = df, iknots = iknots, bknots = bknots)
-  iknots <- knots$iknots # internal knot locations
-  bknots <- knots$bknots # boundary knot locations
-  df     <- knots$df     # validated degrees of freedom
-
-  # basis terms for fpm baseline hazard
-  standata$fpm_x_beg <- rcs(standata$t_beg, iknots = iknots, bknots = bknots)
-  standata$fpm_x_end <- rcs(standata$t_end, iknots = iknots, bknots = bknots)
-
-  # first derivative of basis terms for fpm baseline hazard
-  standata$fpm_dx_beg <- drcs(standata$t_beg, iknots = iknots, bknots = bknots)
-  standata$fpm_dx_end <- drcs(standata$t_end, iknots = iknots, bknots = bknots)
 
   # design matrices for linear predictor
   x <- make_x_for_stan(formula, mf) # fe predictor matrix
@@ -171,6 +157,91 @@ stan_fpm <- function(formula, data, dist = "fpm", df = 3, iknots = NULL, bknots 
   #standata$z <- make_z_for_stan(formula, mf) # re predictor matrix
   #standata$g <- make_g_for_stan(formula, mf) # re group ids (for each row)
 
+  #----- time-dependent effects (i.e. non-proportional hazards)
+
+  # degrees of freedom for time-dependent effects
+  standata$df_tde <- aa(rep(0L, standata$K)) # not implemented yet
+
+  #----- baseline hazard
+
+  if (dist == "exponential") { # exponential model
+
+    # dummy entries for fpm-related stuff
+    standata$df <- 0L
+    standata$fpm_x_beg  <- matrix(0, standata$nrows, 0)
+    standata$fpm_x_end  <- matrix(0, standata$nrows, 0)
+    standata$fpm_dx_beg <- matrix(0, standata$nrows, 0)
+    standata$fpm_dx_end <- matrix(0, standata$nrows, 0)
+
+  } else if (dist == "fpm") { # flexible parametric model
+
+    # uncensored event times
+    tt <- standata$t_end[standata$d == 1]
+
+    # knot locations for fpm baseline hazard
+    knots <- get_knots(tt, df = df, iknots = iknots, bknots = bknots)
+    iknots <- knots$iknots # internal knot locations
+    bknots <- knots$bknots # boundary knot locations
+
+    # degrees of freedom for fpm baseline hazard
+    standata$df <- knots$df
+
+    # basis terms for fpm baseline hazard
+    standata$fpm_x_beg <- rcs(standata$t_beg, iknots = iknots, bknots = bknots)
+    standata$fpm_x_end <- rcs(standata$t_end, iknots = iknots, bknots = bknots)
+
+    # first derivative of basis terms for fpm baseline hazard
+    standata$fpm_dx_beg <- drcs(standata$t_beg, iknots = iknots, bknots = bknots)
+    standata$fpm_dx_end <- drcs(standata$t_end, iknots = iknots, bknots = bknots)
+
+  }
+
+  #----- priors and hyperparameters
+
+  userprior <- prior <- get_prior(prior,
+                                   nvars = standata$K,
+                                   default_scale = 2.5,
+                                   ok_dists = ok_dists_for_betas())
+
+  userprior <- validate_prior(priors, dist = dist)
+  stanprior <- get_default_priors(surv_dist = dist)
+  stanprior <- replace_named_elements(stan_prior, user_prior)
+
+  standata$prior_dist <- 1L
+  standata$prior_dist_for_exp_scale <- 3L
+  standata$prior_dist_for_wei_shape <- 3L
+  standata$prior_dist_for_wei_scale <- 3L
+  standata$prior_dist_for_fpm_coefs <- 1L
+
+  standata$prior_mu <- aa(rep(0L, standata$K))
+  standata$prior_sd <- aa(rep(1L, standata$K))
+  standata$prior_df <- aa(rep(0L, standata$K))
+  standata$global_prior_sd <- 0L
+  standata$global_prior_df <- 0L
+  standata$slab_sd <- 0L
+  standata$slab_df <- 0L
+
+  standata$prior_mu_for_exp_scale <- 0L
+  standata$prior_sd_for_exp_scale <- 1L
+  standata$prior_df_for_exp_scale <- 0L
+
+  standata$prior_mu_for_wei_shape <- 0L
+  standata$prior_sd_for_wei_shape <- 1L
+  standata$prior_df_for_wei_shape <- 0L
+
+  standata$prior_mu_for_wei_scale <- 0L
+  standata$prior_sd_for_wei_scale <- 1L
+  standata$prior_df_for_wei_scale <- 0L
+
+  standata$prior_mu_for_fpm_coefs <- rep(0L, standata$df)
+  standata$prior_sd_for_fpm_coefs <- rep(1L, standata$df)
+  standata$prior_df_for_fpm_coefs <- rep(0L, standata$df)
+
+  #----- additional flags
+
+  standata$prior_PD <- ai(prior_PD)
+  standata$npats <- standata$nevents <- 0L # not currently used
+
   #-----------
   # Fit model
   #-----------
@@ -178,16 +249,23 @@ stan_fpm <- function(formula, data, dist = "fpm", df = 3, iknots = NULL, bknots 
   stanfit  <- stanmodels$surv
   stanpars <- pars_to_monitor(standata)
   if (algorithm == "sampling") {
-    args <- set_sampling_args(
+    args <- nlist(
       object = stanfit,
       data   = standata,
       pars   = stanpars,
-      prior  = NULL,
-      user_dots = dots,
-      user_adapt_delta = adapt_delta,
-      user_max_treedepth = max_treedepth,
-      init = init,
-      show_messages = FALSE)
+      show_messages = FALSE
+    )
+#    args <- set_sampling_args(
+#      object = stanfit,
+#      data   = standata,
+#      pars   = stanpars,
+#      prior  = NULL,
+#      user_dots = dots,
+#      user_adapt_delta = adapt_delta,
+#      user_max_treedepth = max_treedepth,
+#      init = init,
+#      show_messages = FALSE)
+    args[names(dots)] <- dots
     stanfit <- do.call(rstan::sampling, args)
   } else {
     args <- nlist(
@@ -199,12 +277,13 @@ stan_fpm <- function(formula, data, dist = "fpm", df = 3, iknots = NULL, bknots 
     args[names(dots)] <- dots
     stanfit <- do.call(rstan::vb, args)
   }
-  check_stanfit(stanfit)
+  #check_stanfit(stanfit)
 
+  return(stanfit)
   fit <- nlist(stanfit, formula, family, weights, M, cnms, flevels, n_grps, n_yobs,
                algorithm, terms, glmod = y_mod, data, prior.info = prior_info,
-               stan_function = "stan_haz", call = match.call(expand.dots = TRUE))
+               stan_function = "stan_surv", call = match.call(expand.dots = TRUE))
 
-  out <- stansurv(fit)
-  return(out)
+  #out <- stansurv(fit)
+  return(fit)
 }

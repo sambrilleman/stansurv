@@ -239,6 +239,64 @@ maybe_broadcast <- function(x, n) {
   }
 }
 
+# Replace an NA object, or NA entries in a vector
+#
+# @param x The vector with elements to potentially replace.
+# @param replace_with The replacement value.
+replace_na <- function(x, replace_with = "0") {
+  if (is.na(x)) {
+    x <- replace_with
+  } else {
+    x[is.na(x)] <- replace_with
+  }
+  x
+}
+
+# Replace an NULL object, or NULL entries in a vector
+#
+# @param x The vector with elements to potentially replace.
+# @param replace_with The replacement value.
+replace_null <- function(x, replace_with = "0") {
+  if (is.null(x)) {
+    x <- replace_with
+  } else {
+    x[is.null(x)] <- replace_with
+  }
+  x
+}
+
+# Replace named elements of 'x' with 'y'
+replace_named_elements <- function(x, y) {
+  x[names(y)] <- y
+  x
+}
+
+# Shorthand for as.integer, as.double, as.matrix, as.array
+ai <- function(x, ...) as.integer(x, ...)
+ad <- function(x, ...) as.double(x, ...)
+am <- function(x, ...) as.matrix(x, ...)
+aa <- function(x, ...) as.array(x, ...)
+
+# Return a vector of 0's
+zeros <- function(n) {
+  rep(0, times = n)
+}
+
+# Return a vector of 1's
+ones <- function(n) {
+  rep(1, times = n)
+}
+
+# Return the maximum integer
+max_integer <- function() {
+  .Machine$integer.max
+}
+
+# Return the maximum double
+max_double <- function() {
+  .Machine$double.xmax
+}
+
 # Paste items, collapsed together using a comma
 comma <- function(x) {
   paste(x, collapse = ", ")
@@ -258,3 +316,6 @@ stop2 <- function(...) {
 warning2 <- function(...) {
   warning(..., call. = FALSE)
 }
+
+
+
