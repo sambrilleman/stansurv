@@ -164,7 +164,7 @@ basehaz_for_stan <- function(basehaz) {
 #     post-estimation when evaluating the baseline hazard for posterior
 #     predictions since it contains information about the knot locations
 #     for the baseline hazard (this is implemented via splines::predict.bs).
-handle_basehaz <- function(basehaz, df, iknots, bknots, t_beg, t_end, d,
+handle_basehaz <- function(basehaz, df, degree, iknots, bknots, t_beg, t_end, d,
                            ok_basehaz = c("exponential", "weibull", "fpm")) {
 
 
@@ -191,25 +191,65 @@ handle_basehaz <- function(basehaz, df, iknots, bknots, t_beg, t_end, d,
 
   } else if (name == "fpm") {
 
-    # uncensored event times
-    tt <- t_end[d == 1]
+    # log event times
+    log_t_beg <- log(t_beg)
+    log_t_end <- log(t_end)
 
-    # knot locations for fpm baseline hazard
-    degree <- 3L
-    df <- validate_df(df, spline_type = "i")
-    knots  <- get_knots(tt, df = df - degree, iknots = iknots, bknots = bknots)
-    iknots  <- knots$iknots              # internal knot locations
-    bknots  <- c(min(t_beg), max(t_end)) # boundary knot locations
+    # log uncensored event times
+    log_t_end_uncens <- log(t_end[d == 1])
 
+    # internal knots at percentiles of uncensored event times
+    iknots <- get_iknots(log_t_end_uncens, df = df, degree = degree,
+                         iknots = iknots)
+
+    # boundary knots at extremes of event times
+    # NB: ideally we want to use uncensored event times only, and
+    #     set a linearity constraint outside the boundary knots.
+    bknots  <- c(min(log_t_end), max(log_t_end))
+
+    validate_knots(iknots = iknots, bknots = bknots)
+
+    # obtain I-splines basis
     spline_type <- "I-splines"
-    spline_basis <- splines2::iSpline(tt, knots = iknots, Boundary.knots = bknots)
-    df <- ncol(spline_basis) # validated df = num of basis terms
-    user_df <- ncol(spline_basis)
+    spline_basis <- splines2::iSpline(log_t_end_uncens, degree = degree,
+                                      knots = iknots, Boundary.knots = bknots,
+                                      intercept = TRUE)
+
+    # store user input to the df argument
+    user_df <- df
+
+    # store the number of basis terms
+    df <- ncol(spline_basis)
 
   }
 
   nlist(name, type, user_df, df, iknots, bknots, spline_type, spline_basis)
 }
+
+
+# Get the internal and boundary knot locations from a numeric vector
+get_iknots <- function(x, df = 5L, degree = 3L, iknots = NULL) {
+
+  # obtain number of internal knots
+  if (is.null(iknots)) {
+    n_knots <- df - degree - 1  # valid for I-splines
+  } else {
+    n_knots <- length(iknots)
+  }
+
+  # validate number of internal knots
+  if (n_knots < 0) {
+    stop2("Number of internal knots cannot be negative.")
+  }
+
+  # obtain default knot locations if necessary
+  if (is.null(iknots)) {
+    iknots <- qtile(x, nq = n_knots + 1)  # evenly spaced percentiles
+  }
+
+  iknots
+}
+
 
 # Return the design matrix for the baseline hazard (or log cumulative
 # baseline hazard in the case of the fpm model)
@@ -239,10 +279,12 @@ make_basehaz_x <- function(t, basehaz, deriv = FALSE) {
     if (is.null(basis))
       stop2("Bug found: could not find spline basis in 'basehaz' object.")
 
+    log_t <- log(t)
+
     if (deriv) { # derivative of spline basis
-      x <- aa(deriv(predict(basis, t)))
+      x <- aa(deriv(predict(basis, log_t)))
     } else {
-      x <- aa(predict(basis, t))
+      x <- aa(predict(basis, log_t))
     }
 
   }

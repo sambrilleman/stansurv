@@ -309,7 +309,7 @@ model {
           local, global, mix, ool, slab_df, caux);
 
   // log prior for intercept
-  //   -- not included yet
+  target += normal_lpdf(gamma | prior_mean_for_intercept, prior_scale_for_intercept);
 
   // log priors for baseline hazard parameters
   if (type > 1) {

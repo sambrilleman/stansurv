@@ -13,7 +13,7 @@
 #' m1 <- stan_surv(survival::Surv(time, status) ~ trt, data = pbc2)
 #'
 stan_surv <- function(formula, data, basehaz = "fpm",
-                      df = 5L, iknots = NULL, bknots = NULL,
+                      df = 5L, degree = 3L, iknots = NULL, bknots = NULL,
                       prior = normal(), prior_intercept = normal(),
                       prior_aux = list(), prior_PD = FALSE,
                       algorithm = c("sampling", "meanfield", "fullrank"),
@@ -69,14 +69,17 @@ stan_surv <- function(formula, data, basehaz = "fpm",
   #----- baseline hazard
 
   ok_basehaz <- c("exponential", "weibull", "fpm")
-  basehaz <- handle_basehaz(basehaz, df = df, iknots = iknots, bknots = bknots,
+  basehaz <- handle_basehaz(basehaz, df = df, degree = degree,
+                            iknots = iknots, bknots = bknots,
                             t_beg = standata$t_beg, t_end = standata$t_end,
                             d = standata$d, ok_basehaz = ok_basehaz)
   standata$type <- ai(basehaz$type)
   standata$df   <- ai(basehaz$df)
-  standata$basehaz_x_beg  <- make_basehaz_x(standata$t_beg, basehaz = basehaz)
+  #standata$basehaz_x_beg  <- make_basehaz_x(standata$t_beg, basehaz = basehaz)
+  #standata$basehaz_dx_beg <- make_basehaz_x(standata$t_beg, basehaz = basehaz, deriv = TRUE)
+  standata$basehaz_x_beg  <- matrix(0, standata$nrows, standata$df)
+  standata$basehaz_dx_beg <- matrix(0, standata$nrows, standata$df)
   standata$basehaz_x_end  <- make_basehaz_x(standata$t_end, basehaz = basehaz)
-  standata$basehaz_dx_beg <- make_basehaz_x(standata$t_beg, basehaz = basehaz, deriv = TRUE)
   standata$basehaz_dx_end <- make_basehaz_x(standata$t_end, basehaz = basehaz, deriv = TRUE)
 
   #----- priors and hyperparameters
@@ -94,7 +97,7 @@ stan_surv <- function(formula, data, basehaz = "fpm",
 
   user_prior_aux_stuff <- prior_aux_stuff <-
     handle_prior(prior_aux, nvars = basehaz$df,
-                 default_scale = get_default_aux_scale(dist),
+                 default_scale = get_default_aux_scale(basehaz$name),
                  ok_dists = ok_dists_for_aux())
 
   # autoscaling of priors
