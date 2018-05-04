@@ -213,7 +213,7 @@ handle_basehaz <- function(basehaz, df, degree, iknots, bknots, t_beg, t_end, d,
     spline_type <- "I-splines"
     spline_basis <- splines2::iSpline(log_t_end_uncens, degree = degree,
                                       knots = iknots, Boundary.knots = bknots,
-                                      intercept = TRUE)
+                                      intercept = FALSE)
 
     # store user input to the df argument
     user_df <- df
