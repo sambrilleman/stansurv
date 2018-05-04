@@ -267,7 +267,7 @@ model {
   else eta = rep_vector(0.0, nrows);
 
   // add intercept
-  eta = eta + gamma;
+  //eta = eta + gamma;
 
   // log basehaz and log basesurv for each row of data
   if (type == 1) { // exponential model

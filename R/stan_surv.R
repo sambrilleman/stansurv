@@ -12,6 +12,12 @@
 #' pbc2$status <- as.integer(pbc2$status > 0)
 #' m1 <- stan_surv(survival::Surv(time, status) ~ trt, data = pbc2)
 #'
+#' df <- flexsurv::bc
+#' m2 <- stan_surv(survival::Surv(rectime, censrec) ~ 1,
+#'                 data = df, cores = 1, chains = 1, iter = 2000,
+#'                 basehaz = "fpm", iknots = c(6.594869,  7.285963 ),
+#'                 degree = 2, prior_aux = normal(0, 2, autoscale = F))
+#'
 stan_surv <- function(formula, data, basehaz = "fpm",
                       df = 5L, degree = 3L, iknots = NULL, bknots = NULL,
                       prior = normal(), prior_intercept = normal(),
