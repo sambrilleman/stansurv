@@ -135,14 +135,106 @@ validate_surv <- function(x, ok_types = c("right", "counting")) {
 
 # Switch survival distribution for integer used internally by Stan
 #
-# @param dist Character string specifying the survival distribution.
+# @param basehaz Character string specifying the baseline hazard distribution.
 # @return An integer, or NA if unmatched.
-surv_dist_for_stan <- function(dist) {
-  switch(dist,
+basehaz_for_stan <- function(basehaz) {
+  switch(basehaz,
          exponential = 1L,
          weibull     = 2L,
          fpm         = 3L,
          NA)
+}
+
+# Deal with the baseline hazard
+#
+# @param basehaz A string specifying the type of baseline hazard
+# @param basehaz_ops A named list with elements df, knots
+# @param ok_basehaz A list of admissible baseline hazards
+# @param eventtime A numeric vector with eventtimes for each individual
+# @param status A numeric vector with event indicators for each individual
+# @return A named list with the following elements:
+#   type: integer specifying the type of baseline hazard, 1L = weibull,
+#     2L = b-splines, 3L = piecewise.
+#   type_name: character string specifying the type of baseline hazard.
+#   user_df: integer specifying the input to the df argument
+#   df: integer specifying the number of parameters to use for the
+#     baseline hazard.
+#   knots: the knot locations for the baseline hazard.
+#   bs_basis: The basis terms for the B-splines. This is passed to Stan
+#     as the "model matrix" for the baseline hazard. It is also used in
+#     post-estimation when evaluating the baseline hazard for posterior
+#     predictions since it contains information about the knot locations
+#     for the baseline hazard (this is implemented via splines::predict.bs).
+handle_basehaz <- function(basehaz, basehaz_ops,
+                           ok_basehaz = c("exponential", "weibull", "fpm"),
+                           df, iknots, bknots, t_beg, t_end, d) {
+
+
+
+  if (!basehaz %in% ok_basehaz)
+    stop2("'basehaz' must be one of ", comma(ok_basehaz))
+
+  if (!all(names(basehaz_ops) %in% ok_basehaz_ops))
+    stop("'basehaz_ops' can only include: ", comma(ok_basehaz_ops))
+
+  name <- basehaz
+  type <- basehaz_for_stan(basehaz)
+
+  if (name %in% c("exponential", "weibull")) {
+
+    if (!is.null(df))
+      warning2("'df' is ignored for ", name, " baseline hazard.")
+    if (!is.null(knots))
+      warning2("'knots' is ignored for ", name, " baseline hazard.")
+
+    df <- ifelse(name == "weibull", 1L, 0L) # weibull shape parameter
+    user_df      <- NULL
+    iknots       <- NULL
+    bknots       <- NULL
+    spline_type  <- NULL
+    spline_basis <- NULL
+
+  } else if (name == "fpm") {
+
+    # uncensored event times
+    tt <- t_end[d == 1]
+
+    # knot locations for fpm baseline hazard
+    degree <- 3L
+    knots  <- get_knots(tt, df = df - degree, iknots = iknots, bknots = bknots)
+    iknots  <- knots$iknots # internal knot locations
+    bknots  <- knots$bknots # boundary knot locations
+
+    spline_type <- "I-splines"
+    spline_basis <- splines2::iSpline(tt, knots = iknots, Boundary.knots = bknots)
+    df <- ncol(spline_basis) # validated df = num of basis terms
+    user_df <- ncol(spline_basis)
+
+  }
+
+  nlist(name, type, user_df, df, iknots, bknots, spline_type, spline_basis)
+}
+
+# Return the design matrix for the baseline hazard (or log cumulative
+# baseline hazard in the case of the fpm model)
+#
+# @param t The vector of times at which to evaluate the design matrix.
+# @param basehaz A list with info about the baseline hazard, returned by a
+#   call to 'handle_basehaz'
+# @return A matrix
+make_basehaz_x <- function(t, basehaz) {
+
+  if (name == "weibull") {
+    x <- matrix(0L, nrow = length(t), ncol = 0) # dud matrix for Stan
+  } else if (name == "weibull") {
+    x <- matrix(log(t), nrow = length(t), ncol = 1)
+  } else if (name == "fpm") {
+    basis <- basehaz$spline_basis
+    if (is.null(basis))
+      stop2("Bug found: could not find spline basis in 'basehaz' object.")
+    x <- aa(predict(basis, t))
+  }
+  x
 }
 
 # Return the response vector (time)
@@ -151,7 +243,7 @@ surv_dist_for_stan <- function(dist) {
 # @param data The model frame.
 # @param type The type of time variable to return.
 # @return A numeric vector
-make_t_for_stan <- function(formula, data, type = c("beg", "end", "gap")) {
+make_t <- function(formula, data, type = c("beg", "end", "gap")) {
 
   type <- match.arg(type)
 
@@ -180,7 +272,7 @@ make_t_for_stan <- function(formula, data, type = c("beg", "end", "gap")) {
 # @param formula The parsed model formula.
 # @param data The model frame.
 # @return A numeric vector
-make_d_for_stan <- function(formula, data) {
+make_d <- function(formula, data) {
 
   if (formula$surv_type == "right") {
     out <- data[[formula$dvar]]
@@ -204,7 +296,7 @@ make_d_for_stan <- function(formula, data) {
 #   has_intercept: logical for whether the submodel has an intercept
 #   N,K: number of rows (observations) and columns (predictors) in the
 #     fixed effects model matrix
-make_x_for_stan <- function(formula, data) {
+make_x <- function(formula, data) {
 
   x <- model.matrix(formula$fe_form, data)
   x <- drop_intercept(x)
@@ -226,9 +318,11 @@ make_x_for_stan <- function(formula, data) {
 # @return A character vector
 pars_to_monitor <- function(standata) {
   c(if (standata$K > 0) "beta",
-    if (standata$dist == 1) "exp_scale",
-    if (standata$dist == 2) "wei_shape",
-    if (standata$dist == 2) "wei_scale",
-    if (standata$dist == 3) "fpm_coefs")
+    if (standata$basehaz == 1) "exp_scale",
+    if (standata$basehaz == 2) "wei_shape",
+    if (standata$basehaz == 2) "wei_scale",
+    if (standata$basehaz == 3) "fpm_coefs")
 }
+
+
 

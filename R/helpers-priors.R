@@ -71,6 +71,43 @@ get_prior <- function(prior, nvars, default_scale,
         prior_autoscale = isTRUE(prior$autoscale))
 }
 
+# Return the default priors
+#
+# @param basehaz Character string, the distribution for the baseline hazard.
+get_default_priors <- function(dist) {
+
+  priors <- list()
+
+  if (dist == "exponential") {
+    priors$exp_scale <- exponential(rate = 1)
+  } else if (dist == "weibull") {
+    priors$wei_scale <- exponential(rate = 1)
+    priors$wei_shape <- exponential(rate = 1)
+  } else if (dist == "fpm") {
+    priors$fpm_coefs <- normal(location = 0, scale = 2)
+  }
+
+  priors$betas <-
+
+  priors
+}
+
+# Return the default scale hyperparameter for 'prior_aux'
+#
+# @param basehaz Character string, the distribution for the baseline hazard.
+get_default_scale <- function(basehaz) {
+  if (basehaz == "weibull") 2 else 20
+}
+
+# Return logical indicating whether the auxiliary parameters for the
+# survival distribution has a lower bound at zero.
+#
+# @return TRUE for the following distributions:
+#   weibull: shape parameter
+bounded_aux <- function(dist) {
+  dist %in% c("weibull")
+}
+
 # Return the validated prior distribution
 #
 # @param dist_name The user specified prior distribution.

@@ -2,7 +2,8 @@ Package: stansurv
 Type: Package
 Title: Bayesian Survival Analysis using 'Stan'
 Version: 0.1.0-9000
-Author@R: c(person("Sam", "Brilleman", email = "sam.brilleman@monash.edu" 
+Author@R: c(person("Sam", "Brilleman", 
+                   email = "sam.brilleman@monash.edu" 
 						    	 role = c("cre", "aut")))
 Description: Fit Bayesian survival (i.e. time-to-event ) models 
     with the back-end estimation carried out using 'Stan'. The 

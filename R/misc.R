@@ -307,6 +307,11 @@ is_list <- function(x) {
   is(x, "list")
 }
 
+# Shorthand for %in%
+is_in <- function(x, y) {
+  x %in% y
+}
+
 # Error without printing call
 stop2 <- function(...) {
   stop(..., call. = FALSE)

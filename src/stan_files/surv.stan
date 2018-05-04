@@ -12,7 +12,7 @@ functions {
     else if (prior_dist == 4) hs = 4;
     return hs;
   }
-	
+
   /**
   * Scale the primitive population level parameters based on prior information
   *
@@ -106,7 +106,7 @@ functions {
     }
 */    /* else prior_dist is 0 and nothing is added */
   }
-	
+
   /**
   * Log-prior for baseline hazard parameters
   *
@@ -135,7 +135,7 @@ functions {
       else
         target += exponential_lpdf(aux_unscaled | 1);
     }
-  }		
+  }
 
 }
 
@@ -164,8 +164,8 @@ data {
   //   3 = fpm
   int<lower=1,upper=3> dist;
 
-	// flag to draw from prior predictive distribution
-	int<lower=0,upper=1> prior_PD; // 0 = no, 1 = yes
+  // flag to draw from prior predictive distribution
+  int<lower=0,upper=1> prior_PD; // 0 = no, 1 = yes
 
   // prior family:
   //   0 = none
@@ -272,65 +272,65 @@ transformed parameters {
 
 model {
 
-	vector[nrows] eta; // linear predictor
+  vector[nrows] eta; // linear predictor
   vector[nrows] log_basehaz; // log basehaz at t_end for each row of data
   vector[nrows] log_basesurv_beg; // log basesurv at t_beg for each row of data
   vector[nrows] log_basesurv_end; // log basesurv at t_end for each row of data
   vector[nrows] log_haz;  // log haz at t_end for each row of data
   vector[nrows] log_surv; // log surv at t_end for each row of data
 
-	// linear predictor
-	if (K > 0) {
-	  eta = x * beta;
-	}
-	else {
-	  eta = rep_vector(0.0, nrows);
-	}
+  // linear predictor
+  if (K > 0) {
+    eta = x * beta;
+  }
+  else {
+    eta = rep_vector(0.0, nrows);
+  }
 
   // log basehaz and log basesurv for each row of data
   if (dist == 1) { // exponential model
     log_basehaz = rep_vector(log(exp_scale[1]), nrows);
-		log_basesurv_beg = - exp_scale[1] * t_beg;
-		log_basesurv_end = - exp_scale[1] * t_end;
-	}
-	else if (dist == 2) { // weibull model
-	  log_basehaz = log(wei_shape[1]) + log(wei_scale[1]) + t_end * (wei_shape[1] - 1);
-		for (n in 1:nrows) {
-			log_basesurv_beg[n] = - wei_scale[1] * (t_beg[n] ^ wei_shape[1]);
-			log_basesurv_end[n] = - wei_scale[1] * (t_end[n] ^ wei_shape[1]);
-		}
-	}
-	else if (dist == 3) { // fpm model
-	  log_basehaz = - log(t_end) + log(fpm_dx_end * fpm_coefs[1]) + (fpm_x_end * fpm_coefs[1]);
-		log_basesurv_beg = - exp(fpm_x_beg * fpm_coefs[1]);
-		log_basesurv_end = - exp(fpm_x_end * fpm_coefs[1]);
-	}
+    log_basesurv_beg = - exp_scale[1] * t_beg;
+    log_basesurv_end = - exp_scale[1] * t_end;
+  }
+  else if (dist == 2) { // weibull model
+    log_basehaz = log(wei_shape[1]) + log(wei_scale[1]) + t_end * (wei_shape[1] - 1);
+    for (n in 1:nrows) {
+      log_basesurv_beg[n] = - wei_scale[1] * (t_beg[n] ^ wei_shape[1]);
+      log_basesurv_end[n] = - wei_scale[1] * (t_end[n] ^ wei_shape[1]);
+    }
+  }
+  else if (dist == 3) { // fpm model
+    log_basehaz = - log(t_end) + log(fpm_dx_end * fpm_coefs[1]) + (fpm_x_end * fpm_coefs[1]);
+    log_basesurv_beg = - exp(fpm_x_beg * fpm_coefs[1]);
+    log_basesurv_end = - exp(fpm_x_end * fpm_coefs[1]);
+  }
 
   // log hazard for each row of data
   log_haz = log_basehaz + eta;
 
-	// log survival for each row of data (allows for delayed entry)
-	log_surv = (log_basesurv_end - log_basesurv_beg) .* exp(eta);
+  // log survival for each row of data (allows for delayed entry)
+  log_surv = (log_basesurv_end - log_basesurv_beg) .* exp(eta);
 
   // log likelihood for event model
   if (prior_PD == 0) { // unweighted log likelihood
     target += sum(d .* log_haz) + sum(log_surv);
   }
 
-	// log priors for coefficients
-	beta_lp(z_beta, prior_dist, prior_sd, prior_df, global_prior_df,
-	        local, global, mix, ool, slab_df, caux);												 
-												 
-	// log priors for baseline hazard parameters
+  // log priors for coefficients
+  beta_lp(z_beta, prior_dist, prior_sd, prior_df, global_prior_df,
+          local, global, mix, ool, slab_df, caux);
+
+  // log priors for baseline hazard parameters
   if (dist == 1) { // exponential model
     aux_lp(z_exp_scale[1], prior_dist_for_exp_scale, prior_df_for_exp_scale);
-	}
-	else if (dist == 2) { // weibull model
+  }
+  else if (dist == 2) { // weibull model
     aux_lp(z_wei_shape[1], prior_dist_for_wei_shape, prior_df_for_wei_shape);
     aux_lp(z_wei_scale[1], prior_dist_for_wei_scale, prior_df_for_wei_scale);
-	}
-	else if (dist == 3) { // fpm model
+  }
+  else if (dist == 3) { // fpm model
     aux_vec_lp(z_fpm_coefs[1], prior_dist_for_fpm_coefs, prior_df_for_fpm_coefs);
-	}
-	
+  }
+
 }
