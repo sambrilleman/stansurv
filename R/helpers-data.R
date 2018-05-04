@@ -148,7 +148,6 @@ basehaz_for_stan <- function(basehaz) {
 # Deal with the baseline hazard
 #
 # @param basehaz A string specifying the type of baseline hazard
-# @param basehaz_ops A named list with elements df, knots
 # @param ok_basehaz A list of admissible baseline hazards
 # @param eventtime A numeric vector with eventtimes for each individual
 # @param status A numeric vector with event indicators for each individual
@@ -165,17 +164,13 @@ basehaz_for_stan <- function(basehaz) {
 #     post-estimation when evaluating the baseline hazard for posterior
 #     predictions since it contains information about the knot locations
 #     for the baseline hazard (this is implemented via splines::predict.bs).
-handle_basehaz <- function(basehaz, basehaz_ops,
-                           ok_basehaz = c("exponential", "weibull", "fpm"),
-                           df, iknots, bknots, t_beg, t_end, d) {
+handle_basehaz <- function(basehaz, df, iknots, bknots, t_beg, t_end, d,
+                           ok_basehaz = c("exponential", "weibull", "fpm")) {
 
 
 
   if (!basehaz %in% ok_basehaz)
     stop2("'basehaz' must be one of ", comma(ok_basehaz))
-
-  if (!all(names(basehaz_ops) %in% ok_basehaz_ops))
-    stop("'basehaz_ops' can only include: ", comma(ok_basehaz_ops))
 
   name <- basehaz
   type <- basehaz_for_stan(basehaz)
@@ -201,9 +196,10 @@ handle_basehaz <- function(basehaz, basehaz_ops,
 
     # knot locations for fpm baseline hazard
     degree <- 3L
+    df <- validate_df(df, spline_type = "i")
     knots  <- get_knots(tt, df = df - degree, iknots = iknots, bknots = bknots)
-    iknots  <- knots$iknots # internal knot locations
-    bknots  <- knots$bknots # boundary knot locations
+    iknots  <- knots$iknots              # internal knot locations
+    bknots  <- c(min(t_beg), max(t_end)) # boundary knot locations
 
     spline_type <- "I-splines"
     spline_basis <- splines2::iSpline(tt, knots = iknots, Boundary.knots = bknots)
@@ -222,17 +218,33 @@ handle_basehaz <- function(basehaz, basehaz_ops,
 # @param basehaz A list with info about the baseline hazard, returned by a
 #   call to 'handle_basehaz'
 # @return A matrix
-make_basehaz_x <- function(t, basehaz) {
+make_basehaz_x <- function(t, basehaz, deriv = FALSE) {
+  name <- basehaz$name
 
-  if (name == "weibull") {
-    x <- matrix(0L, nrow = length(t), ncol = 0) # dud matrix for Stan
+  if (name == "exponential") {
+
+    x <- matrix(0, nrow = length(t), ncol = 0L)   # dud matrix for Stan
+
   } else if (name == "weibull") {
-    x <- matrix(log(t), nrow = length(t), ncol = 1)
+
+    if (deriv) {
+      x <- matrix(0, nrow = length(t), ncol = 1L) # dud matrix for Stan
+    } else {
+      x <- matrix(log(t), nrow = length(t), ncol = 1L)
+    }
+
   } else if (name == "fpm") {
+
     basis <- basehaz$spline_basis
     if (is.null(basis))
       stop2("Bug found: could not find spline basis in 'basehaz' object.")
-    x <- aa(predict(basis, t))
+
+    if (deriv) { # derivative of spline basis
+      x <- aa(deriv(predict(basis, t)))
+    } else {
+      x <- aa(predict(basis, t))
+    }
+
   }
   x
 }
@@ -317,12 +329,8 @@ make_x <- function(formula, data) {
 # @param standata The list of data to pass to Stan.
 # @return A character vector
 pars_to_monitor <- function(standata) {
-  c(if (standata$K > 0) "beta",
-    if (standata$basehaz == 1) "exp_scale",
-    if (standata$basehaz == 2) "wei_shape",
-    if (standata$basehaz == 2) "wei_scale",
-    if (standata$basehaz == 3) "fpm_coefs")
+  c("gamma",
+    if (standata$K > 0) "beta",
+    if (standata$type > 1) "basehaz_coefs")
 }
-
-
 

@@ -7,10 +7,13 @@
 #' @export
 #'
 #' @examples
-#' \donttest{
+#' pbc2 <- survival::pbc
+#' pbc2 <- pbc2[!is.na(pbc2$trt),]
+#' pbc2$status <- as.integer(pbc2$status > 0)
+#' m1 <- stan_surv(survival::Surv(time, status) ~ trt, data = pbc2)
 #'
 stan_surv <- function(formula, data, basehaz = "fpm",
-                      df = 3, iknots = NULL, bknots = NULL,
+                      df = 5L, iknots = NULL, bknots = NULL,
                       prior = normal(), prior_intercept = normal(),
                       prior_aux = list(), prior_PD = FALSE,
                       algorithm = c("sampling", "meanfield", "fullrank"),
@@ -66,26 +69,33 @@ stan_surv <- function(formula, data, basehaz = "fpm",
   #----- baseline hazard
 
   ok_basehaz <- c("exponential", "weibull", "fpm")
-  basehaz <- handle_basehaz(basehaz, basehaz_ops, ok_basehaz = ok_basehaz,
-                            eventtime = e_mod$eventtime, status = e_mod$status)
-  standata$basehaz_type  <- as.integer(basehaz$type)
-  standata$basehaz_df    <- as.integer(basehaz$df)
-  standata$basehaz_x_beg <- make_basehaz_x(t_beg, basehaz = basehaz)
-  standata$basehaz_x_end <- make_basehaz_x(t_end, basehaz = basehaz)
+  basehaz <- handle_basehaz(basehaz, df = df, iknots = iknots, bknots = bknots,
+                            t_beg = standata$t_beg, t_end = standata$t_end,
+                            d = standata$d, ok_basehaz = ok_basehaz)
+  standata$type <- ai(basehaz$type)
+  standata$df   <- ai(basehaz$df)
+  standata$basehaz_x_beg  <- make_basehaz_x(standata$t_beg, basehaz = basehaz)
+  standata$basehaz_x_end  <- make_basehaz_x(standata$t_end, basehaz = basehaz)
+  standata$basehaz_dx_beg <- make_basehaz_x(standata$t_beg, basehaz = basehaz, deriv = TRUE)
+  standata$basehaz_dx_end <- make_basehaz_x(standata$t_end, basehaz = basehaz, deriv = TRUE)
 
   #----- priors and hyperparameters
 
   # priors
   user_prior_stuff <- prior_stuff <-
-    handle_prior(prior, nvars = x$K, default_scale = 2.5, ok_dists = ok_dists)
+    handle_prior(prior, nvars = x$K,
+                 default_scale = 2,
+                 ok_dists = ok_dists())
 
   user_prior_intercept_stuff <- prior_intercept_stuff <-
     handle_prior(prior_intercept, nvars = 1,
-                 default_scale = 20, ok_dists = ok_intercept_dists)
+                 default_scale = 2,
+                 ok_dists = ok_dists_for_intercept())
 
   user_prior_aux_stuff <- prior_aux_stuff <-
     handle_prior(prior_aux, nvars = basehaz$df,
-                 default_scale = get_default_scale(dist), ok_dists = ok_aux_dists)
+                 default_scale = get_default_aux_scale(dist),
+                 ok_dists = ok_dists_for_aux())
 
   # autoscaling of priors
   prior_stuff           <- autoscale_prior(prior_stuff, predictors = x$x)
@@ -114,6 +124,7 @@ stan_surv <- function(formula, data, basehaz = "fpm",
   #----- additional flags
 
   standata$prior_PD <- ai(prior_PD)
+  standata$delayed <- ai(!all_zero(standata$t_beg))
   standata$npats <- standata$nevents <- 0L # not currently used
 
   #-----------

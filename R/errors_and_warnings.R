@@ -15,3 +15,9 @@ STOP_invalid_names <- function(x, ok_nms) {
     stop2(msg, commas(ok_nms))
   }
 }
+
+# Error message when the argument contains an object of the incorrect type
+STOP_arg <- function(arg_name, type) {
+  stop(paste0("'", arg_name, "' should be a ", paste0(type, collapse = " or "),
+              " object or a list of those objects."), call. = FALSE)
+}

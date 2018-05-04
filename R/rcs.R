@@ -98,12 +98,12 @@ get_knots <- function(x, df = 3, iknots = NULL, bknots = NULL) {
   if (is.null(iknots)) {
     # user did not specify internal knot locations
     nk <- df - 1
-    df <- validate_df(df)
+    df <- validate_positive_scalar(df)
     iknots <- qtile(x, nq = df)
   } else {
     # user did specify internal knot locations
     nk <- length(iknots)
-    df <- validate_df(nk + 1)
+    df <- validate_positive_scalar(nk + 1)
   }
 
   if (is.null(bknots)) {
@@ -151,13 +151,27 @@ qtile <- function(x, nq = 2) {
   }
 }
 
-# Check the degrees of freedom are positive
+# Check the number of df is valid for the type of spline basis
 #
-# @param df The degrees of freedom for the restricted cubic splines.
-validate_df <- function(df) {
-  if (df < 1) {
-    stop2("'df' must be positive.")
+# @param df The degrees of freedom for the splines.
+validate_df <- function(df, spline_type = c("i", "b")) {
+  type <- match.arg(spline_type)
+  if (type == "i") { # I-splines
+    if (df < 5L) {
+      stop2("'df' must be >= 5 for I-splines.")
+    }
+  } else if (type == "b") {
+    if (df < 1L) {
+      stop2("'df' must be >= 1 for B-splines.")
+    }
   }
   df
 }
 
+# Return error if not a positive scalar
+validate_positive_scalar <- function(x) {
+  if (!x > 0) {
+    stop2("'x' should be a positive scalar.")
+  }
+  x
+}

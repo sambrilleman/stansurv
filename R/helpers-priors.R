@@ -1,18 +1,3 @@
-# Check the user-specified 'priors' list has valid named elements
-validate_user_prior <- function(x, surv_dist = "weibull") {
-  if (is.null(x)) {
-    # priors was set to NULL, return empty list
-    x <- list()
-  } else if (!is_list(x)) {
-    # priors was not a list, return error
-    STOP_named_list(x)
-  } else {
-    # check names of the user-specified list of priors
-    ok_nms <- ok_priors_parnames(dist = surv_dist)
-    STOP_invalid_names(x, ok_nms)
-  }
-}
-
 # Return a list with validated information about the user-specified
 # prior distribution
 #
@@ -27,8 +12,8 @@ validate_user_prior <- function(x, surv_dist = "weibull") {
 #   prior_df: Scalar or vector of dfs for the prior.
 #   prior_dist_name: Character string naming the prior.
 #   global_*, slab_*: Additional parameters for shrinkage priors.
-get_prior <- function(prior, nvars, default_scale,
-                      ok_dists = ok_priors_for_beta()) {
+handle_prior <- function(prior, nvars, default_scale,
+                         ok_dists = ok_dists()) {
 
   # build NULL prior if necessary
   if (!length(prior))
@@ -39,14 +24,14 @@ get_prior <- function(prior, nvars, default_scale,
     STOP_named_list(prior)
 
   # validate user inputs for: dist, location, scale, df
-  prior_name  <- set_prior_name(prior$dist, ok_dists = ok_dists) # character
-  prior_dist  <- set_prior_dist(prior$dist)                      # integer
-  prior_mean  <- set_prior_mean(prior$location, nvars = nvars)
-  prior_scale <- set_prior_scale(prior$scale, nvars = nvars, default_scale = default_scale)
-  prior_df    <- set_prior_df(prior$df, nvars = nvars)
+  prior_name  <- validate_prior_name(prior$dist, ok_dists = ok_dists) # character
+  prior_dist  <- get_prior_dist(prior$dist)                           # integer
+  prior_mean  <- get_prior_mean(prior$location, nvars = nvars)
+  prior_scale <- get_prior_scale(prior$scale, nvars = nvars, default_scale = default_scale)
+  prior_df    <- get_prior_df(prior$df, nvars = nvars)
 
   # additional info for shrinkage priors
-  if (prior_dist_name %in% shrink_priors()) {
+  if (prior_name %in% shrink_priors()) {
     prior_scale <- NULL
     global_prior_scale <- prior$global_scale
     global_prior_df    <- prior$global_df
@@ -71,51 +56,94 @@ get_prior <- function(prior, nvars, default_scale,
         prior_autoscale = isTRUE(prior$autoscale))
 }
 
-# Return the default priors
+# Autoscaling of priors
 #
-# @param basehaz Character string, the distribution for the baseline hazard.
-get_default_priors <- function(dist) {
+# @param prior_stuff A named list returned by a call to handle_glm_prior
+# @param response A vector containing the response variable, only required if
+#   the priors are to be scaled by the standard deviation of the response (for
+#   gaussian reponse variables only)
+# @param predictors The predictor matrix, only required if the priors are to be
+#   scaled by the range/sd of the predictors
+# @param family A family object
+# @param QR A logical specifying whether QR decomposition is used for the
+#   predictor matrix
+# @param min_prior_scale The minimum allowed for prior scales
+# @param assoc A two dimensional array with information about desired association
+#   structure for the joint model (returned by a call to validate_assoc). Cannot
+#   be NULL if autoscaling priors for the association parameters.
+# @param ... Other arguments passed to make_assoc_terms. If autoscaling priors
+#   for the association parameters then this should include 'parts' which
+#   is a list containing the design matrices for the longitudinal submodel
+#   evaluated at the quadrature points, as well as 'beta' and 'b' which are
+#   the parameter values to use when constructing the linear predictor(s) in
+#   make_assoc_terms.
+# @return A named list with the same structure as returned by handle_glm_prior
+autoscale_prior <- function(prior_stuff, response = NULL, predictors = NULL,
+                            family = NULL, QR = FALSE, min_prior_scale = 1e-12,
+                            assoc = NULL, ...) {
+  ps <- prior_stuff
 
-  priors <- list()
-
-  if (dist == "exponential") {
-    priors$exp_scale <- exponential(rate = 1)
-  } else if (dist == "weibull") {
-    priors$wei_scale <- exponential(rate = 1)
-    priors$wei_shape <- exponential(rate = 1)
-  } else if (dist == "fpm") {
-    priors$fpm_coefs <- normal(location = 0, scale = 2)
+  if (!is.null(response) && is.gaussian(family)) {
+    # use response variable for scaling priors
+    if (ps$prior_dist > 0L && ps$prior_autoscale) {
+      ss <- sd(response)
+      ps$prior_scale <- ss * ps$prior_scale
+    }
   }
 
-  priors$betas <-
+  if (!is.null(predictors) && !QR) {
+    # use predictors for scaling priors
+    if (ps$prior_dist > 0L && ps$prior_autoscale) {
+      ps$prior_scale <-
+        pmax(min_prior_scale,
+             ps$prior_scale / apply(predictors, 2L, get_scale_value))
+    }
+  }
 
-  priors
+  if (!is.null(assoc)) {
+    # Evaluate mean and SD of each of the association terms that will go into
+    # the linear predictor for the event submodel (as implicit "covariates").
+    # (NB the approximate association terms are calculated using coefs
+    # from the separate longitudinal submodels estimated using glmer).
+    # The mean will be used for centering each association term.
+    # The SD will be used for autoscaling the prior for each association parameter.
+    if (is.null(family))
+      stop("'family' cannot be NULL when autoscaling association parameters.")
+    assoc_terms <- make_assoc_terms(family = family, assoc = assoc, ...)
+    ps$a_xbar <- as.array(apply(assoc_terms, 2L, mean))
+    if (ps$prior_dist > 0L && ps$prior_autoscale) {
+      a_beta_scale <- apply(assoc_terms, 2L, get_scale_value)
+      ps$prior_scale <- pmax(min_prior_scale, ps$prior_scale / a_beta_scale)
+    }
+  }
+
+  ps$prior_scale <- as.array(pmin(.Machine$double.xmax, ps$prior_scale))
+  ps
 }
 
-# Return the default scale hyperparameter for 'prior_aux'
+# Function to return the range or SD of the predictors, used for scaling the priors
+# This is taken from an anonymous function in stan_glm.fit
 #
-# @param basehaz Character string, the distribution for the baseline hazard.
-get_default_scale <- function(basehaz) {
-  if (basehaz == "weibull") 2 else 20
+# @param x A vector
+get_scale_value <- function(x) {
+  num.categories <- n_distinct(x)
+  x.scale <- 1
+  if (num.categories == 2) {
+    x.scale <- diff(range(x))
+  } else if (num.categories > 2) {
+    x.scale <- sd(x)
+  }
+  return(x.scale)
 }
 
-# Return logical indicating whether the auxiliary parameters for the
-# survival distribution has a lower bound at zero.
-#
-# @return TRUE for the following distributions:
-#   weibull: shape parameter
-bounded_aux <- function(dist) {
-  dist %in% c("weibull")
-}
-
-# Return the validated prior distribution
+# Return the name of the prior distribution after validating it
 #
 # @param dist_name The user specified prior distribution.
-# @param ok_dists A list of valid prior distributions.
-set_prior_name(dist_name, ok_dists) {
+# @param ok_dists A vector of valid prior distributions.
+validate_prior_name <- function(dist_name, ok_dists) {
   if (!dist_name %in% unlist(ok_dists)) {
-    nms <- paste(names(ok_dists), collapse = ", ")
-    stop2("The prior distribution should be one of: ", nms)
+    nms <- names(ok_dists)
+    stop2("The prior distribution should be one of: ", comma(nms))
   }
   dist_name
 }
@@ -124,7 +152,7 @@ set_prior_name(dist_name, ok_dists) {
 #
 # @param dist Character string specifying the prior distribution.
 # @return An integer, or NA if unmatched.
-set_prior_dist <- function(dist_name) {
+get_prior_dist <- function(dist_name) {
   switch(dist_name,
          normal      = 1L,
          t           = 2L,
@@ -132,7 +160,7 @@ set_prior_dist <- function(dist_name) {
          hs_plus     = 4L,
          laplace     = 5L,
          lasso       = 6L,
-         exponential = 3L, # only used for scale pars, so no conflict with 3 for hs
+         exponential = 3L, # only used for aux pars, so no conflict with hs
          NA)
 }
 
@@ -140,7 +168,7 @@ set_prior_dist <- function(dist_name) {
 #
 # @param prior_mean Scalar or vector, the user specified location for the prior.
 # @param nvars Integer The required length for the mean vector.
-set_prior_mean <- function(prior_mean, nvars) {
+get_prior_mean <- function(prior_mean, nvars) {
   prior_mean <- replace_na(prior_mean, replace_with = 0)
   prior_mean <- maybe_broadcast(prior_mean, nvars)
   prior_mean <- aa(prior_mean) # return as array
@@ -152,8 +180,8 @@ set_prior_mean <- function(prior_mean, nvars) {
 # @param scale Scalar or vector, the user specified scale for the prior.
 # @param nvars Integer The required length for the scale vector.
 # @param default_scale Scalar, the default scale for the prior.
-set_prior_scale <- function(scale, nvars, default_scale) {
-  stopifnot(is.numeric(default))
+get_prior_scale <- function(scale, nvars, default_scale) {
+  stopifnot(is.numeric(default_scale))
   scale <- replace_null(scale, replace_with = default_scale)
   scale <- maybe_broadcast(scale, nvars)
   scale
@@ -163,7 +191,7 @@ set_prior_scale <- function(scale, nvars, default_scale) {
 #
 # @param location Scalar or vector, the user specified df for the prior.
 # @param nvars Integer The required length for the df vector.
-set_prior_df <- function(prior_df, nvars) {
+get_prior_df <- function(prior_df, nvars) {
   prior_df <- replace_na(prior_df, replace_with = 1)
   prior_df <- maybe_broadcast(prior_df, nvars)
   prior_df <- pmin(max_double(), prior_df)
@@ -186,7 +214,7 @@ make_null_prior <- function(nvars) {
 }
 
 # Return a list of valid priors for (unconstrained) coefficients
-ok_priors_for_beta <- function(...) {
+ok_dists <- function(...) {
   nlist("normal",
         student_t = "t",
         "cauchy",
@@ -196,32 +224,19 @@ ok_priors_for_beta <- function(...) {
         "lasso")
 }
 
-# Return a list of valid priors for constrained auxiliary parameters
-ok_priors_for_caux <- function(...) {
-  nlist("normal",
-        student_t = "t",
-        "cauchy",
-        "exponential")
-}
-
-# Return a list of valid priors for unconstrained auxiliary parameters
-ok_priors_for_uaux <- function(...) {
+# Return a list of valid priors for auxiliary parameters
+ok_dists_for_intercept <- function(...) {
   nlist("normal",
         student_t = "t",
         "cauchy")
 }
 
-# Return the parameter names that can be specified by the user for each
-# element of the 'priors' list
-ok_priors_parnames <- function(dist = "exponential") {
-  if (dist == "exponential") {
-    out <- c("betas", "exp_scale")
-  } else if (dist == "weibull") {
-    out <- c("betas", "wei_shape", "wei_scale")
-  } else if (dist == "fpm") {
-    out <- c("betas", "fpm_coefs")
-  }
-  out
+# Return a list of valid priors for auxiliary parameters
+ok_dists_for_aux <- function(...) {
+  nlist("normal",
+        student_t = "t",
+        "cauchy",
+        "exponential")
 }
 
 # Return the names of valid non-shrinkage priors for (unconstrained) coefficients
@@ -232,4 +247,11 @@ non_shrink_priors <- function(...) {
 # Return the names of valid shrinkage priors for (unconstrained) coefficients
 shrink_priors <- function(...) {
   c("hs", "hs_plus")
+}
+
+# Return the default scale parameter for 'prior_aux'
+#
+# @param basehaz Character string, the distribution for the baseline hazard.
+get_default_aux_scale <- function(basehaz) {
+  if (basehaz == "weibull") 2 else 1
 }

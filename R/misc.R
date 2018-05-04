@@ -271,6 +271,11 @@ replace_named_elements <- function(x, y) {
   x
 }
 
+# Check if all elements of a vector are zeros
+all_zero <- function(x) {
+  all(x == 0)
+}
+
 # Shorthand for as.integer, as.double, as.matrix, as.array
 ai <- function(x, ...) as.integer(x, ...)
 ad <- function(x, ...) as.double(x, ...)
