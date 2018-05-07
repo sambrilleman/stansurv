@@ -13,12 +13,12 @@
 #' m1 <- stan_surv(survival::Surv(time, status) ~ trt, data = pbc2)
 #'
 #' df <- flexsurv::bc
-#' m2 <- stan_surv(survival::Surv(rectime, censrec) ~ 1,
+#' m2 <- stan_surv(survival::Surv(rectime, censrec) ~ group,
 #'                 data = df, cores = 1, chains = 1, iter = 2000,
 #'                 basehaz = "fpm", iknots = c(6.594869,  7.285963 ),
 #'                 degree = 2, prior_aux = normal(0, 2, autoscale = F))
 #'
-stan_surv <- function(formula, data, basehaz = "fpm",
+stan_surv <- function(formula, data, basehaz = "fpm", timescale = "log",
                       df = 5L, degree = 3L, iknots = NULL, bknots = NULL,
                       prior = normal(), prior_intercept = normal(),
                       prior_aux = list(), prior_PD = FALSE,
@@ -74,19 +74,23 @@ stan_surv <- function(formula, data, basehaz = "fpm",
 
   #----- baseline hazard
 
-  ok_basehaz <- c("exponential", "weibull", "fpm")
+  ok_basehaz <- c("exponential", "weibull", "fpm", "fpm2")
   basehaz <- handle_basehaz(basehaz, df = df, degree = degree,
                             iknots = iknots, bknots = bknots,
                             t_beg = standata$t_beg, t_end = standata$t_end,
-                            d = standata$d, ok_basehaz = ok_basehaz)
+                            d = standata$d, ok_basehaz = ok_basehaz,
+                            timescale = timescale)
   standata$type <- ai(basehaz$type)
   standata$df   <- ai(basehaz$df)
   #standata$basehaz_x_beg  <- make_basehaz_x(standata$t_beg, basehaz = basehaz)
   #standata$basehaz_dx_beg <- make_basehaz_x(standata$t_beg, basehaz = basehaz, deriv = TRUE)
   standata$basehaz_x_beg  <- matrix(0, standata$nrows, standata$df)
   standata$basehaz_dx_beg <- matrix(0, standata$nrows, standata$df)
-  standata$basehaz_x_end  <- make_basehaz_x(standata$t_end, basehaz = basehaz)
-  standata$basehaz_dx_end <- make_basehaz_x(standata$t_end, basehaz = basehaz, deriv = TRUE)
+  standata$basehaz_x_end  <- make_basehaz_x(standata$t_end, basehaz = basehaz,
+                                            timescale = timescale)
+  standata$basehaz_dx_end <- make_basehaz_x(standata$t_end, basehaz = basehaz,
+                                            timescale = timescale, deriv = TRUE)
+  standata$has_intercept  <- ai(has_intercept(basehaz))
 
   #----- priors and hyperparameters
 
@@ -173,9 +177,7 @@ stan_surv <- function(formula, data, basehaz = "fpm",
   }
   #check_stanfit(stanfit)
 
-  return(stanfit)
-  fit <- nlist(stanfit, formula, family, weights, M, cnms, flevels, n_grps, n_yobs,
-               algorithm, terms, glmod = y_mod, data, prior.info = prior_info,
+  fit <- nlist(stanfit, formula, data, basehaz, algorithm,
                stan_function = "stan_surv", call = match.call(expand.dots = TRUE))
 
   #out <- stansurv(fit)

@@ -142,6 +142,7 @@ basehaz_for_stan <- function(basehaz) {
          exponential = 1L,
          weibull     = 2L,
          fpm         = 3L,
+         fpm2        = 4L,
          NA)
 }
 
@@ -165,9 +166,8 @@ basehaz_for_stan <- function(basehaz) {
 #     predictions since it contains information about the knot locations
 #     for the baseline hazard (this is implemented via splines::predict.bs).
 handle_basehaz <- function(basehaz, df, degree, iknots, bknots, t_beg, t_end, d,
-                           ok_basehaz = c("exponential", "weibull", "fpm")) {
-
-
+                           ok_basehaz = c("exponential", "weibull", "fpm"),
+                           timescale) {
 
   if (!basehaz %in% ok_basehaz)
     stop2("'basehaz' must be one of ", comma(ok_basehaz))
@@ -189,31 +189,37 @@ handle_basehaz <- function(basehaz, df, degree, iknots, bknots, t_beg, t_end, d,
     spline_type  <- NULL
     spline_basis <- NULL
 
-  } else if (name == "fpm") {
+  } else if (name %in% c("fpm", "fpm2")) {
 
     # log event times
-    log_t_beg <- log(t_beg)
-    log_t_end <- log(t_end)
+    if (is.null(timescale)) {
+      t0 <- t_beg
+      t1 <- t_end
+    } else if (timescale == "log") {
+      t0 <- log(t_beg)
+      t1 <- log(t_end)
+    }
 
-    # log uncensored event times
-    log_t_end_uncens <- log(t_end[d == 1])
+    # uncensored (log) event times
+    t1_uncens <- t1[d == 1]
 
     # internal knots at percentiles of uncensored event times
-    iknots <- get_iknots(log_t_end_uncens, df = df, degree = degree,
-                         iknots = iknots)
+    iknots <- get_iknots(t1_uncens, df = df, degree = degree, iknots = iknots)
 
     # boundary knots at extremes of event times
     # NB: ideally we want to use uncensored event times only, and
     #     set a linearity constraint outside the boundary knots.
-    bknots  <- c(min(log_t_end), max(log_t_end))
+    if (is.null(bknots)) {
+      bknots  <- c(min(t1), max(t1))
+    }
 
     validate_knots(iknots = iknots, bknots = bknots)
 
     # obtain I-splines basis
     spline_type <- "I-splines"
-    spline_basis <- splines2::iSpline(log_t_end_uncens, degree = degree,
+    spline_basis <- splines2::iSpline(t1_uncens, degree = degree,
                                       knots = iknots, Boundary.knots = bknots,
-                                      intercept = FALSE)
+                                      intercept = TRUE)
 
     # store user input to the df argument
     user_df <- df
@@ -223,7 +229,8 @@ handle_basehaz <- function(basehaz, df, degree, iknots, bknots, t_beg, t_end, d,
 
   }
 
-  nlist(name, type, user_df, df, iknots, bknots, spline_type, spline_basis)
+  nlist(name, type, user_df, df, iknots, bknots, timescale,
+        spline_type, spline_basis)
 }
 
 
@@ -258,7 +265,7 @@ get_iknots <- function(x, df = 5L, degree = 3L, iknots = NULL) {
 # @param basehaz A list with info about the baseline hazard, returned by a
 #   call to 'handle_basehaz'
 # @return A matrix
-make_basehaz_x <- function(t, basehaz, deriv = FALSE) {
+make_basehaz_x <- function(t, basehaz, deriv = FALSE, timescale = "log") {
   name <- basehaz$name
 
   if (name == "exponential") {
@@ -273,22 +280,30 @@ make_basehaz_x <- function(t, basehaz, deriv = FALSE) {
       x <- matrix(log(t), nrow = length(t), ncol = 1L)
     }
 
-  } else if (name == "fpm") {
+  } else if (name == "fpm" || name == "fpm2") {
 
     basis <- basehaz$spline_basis
     if (is.null(basis))
       stop2("Bug found: could not find spline basis in 'basehaz' object.")
 
-    log_t <- log(t)
+    if (is.null(timescale)) {
+      tt <- t
+    } else if (timescale == "log") {
+      tt <- log(t)
+    }
 
     if (deriv) { # derivative of spline basis
-      x <- aa(deriv(predict(basis, log_t)))
+      x <- aa(deriv(predict(basis, tt)))
     } else {
-      x <- aa(predict(basis, log_t))
+      x <- aa(predict(basis, tt))
     }
 
   }
   x
+}
+
+has_intercept <- function(basehaz) {
+  (basehaz$name %in% c("exponential", "weibull"))
 }
 
 # Return the response vector (time)

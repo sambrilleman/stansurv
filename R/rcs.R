@@ -128,11 +128,17 @@ validate_knots <- function(iknots, bknots) {
     stop2("'bknots' should a length 2 numeric vector.")
   }
 
-  check3 <- !is.numeric(iknots)
-  check4 <- any(iknots < bknots[1L])
-  check5 <- any(iknots > bknots[2L])
-  if (any(check3, check4, check5)) {
-    stop2("'iknots' cannot be outside the boundary knots.")
+  if (!is.null(iknots)) {
+    check3 <- !is.numeric(iknots)
+    if (check3) {
+      stop2("'iknots' must be numeric.")
+    }
+
+    check4 <- any(iknots < bknots[1L])
+    check5 <- any(iknots > bknots[2L])
+    if (any(check3, check4, check5)) {
+      stop2("'iknots' cannot be outside the boundary knots.")
+    }
   }
 }
 

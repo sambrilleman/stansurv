@@ -1,6 +1,17 @@
 functions {
 
   /**
+  * Return the lower bound for the baseline hazard parameters
+  *
+  * @param type An integer indicating the type of baseline hazard
+  * @return A real
+  */
+  real basehaz_coefs_lb(int type) {
+	  real lb = (type == 4) ? negative_infinity() : 0;
+    return lb;
+	}
+	
+  /**
   * Return the required number of local hs parameters
   *
   * @param prior_dist An integer indicating the prior distribution
@@ -142,12 +153,14 @@ data {
   vector[nrows] d;         // event indicator for each row of data
   matrix[nrows,K] x;       // predictor matrix
   int<lower=0,upper=1> delayed; // flag for delayed entry
+  int<lower=0,upper=1> has_intercept; // flag for intercept
 
   // baseline hazard type:
   //   1 = exponential
   //   2 = weibull
-  //   3 = fpm
-  int<lower=1,upper=3> type;
+  //   3 = fpm  (fpm on cum haz scale)
+	//   4 = fpm2 (fpm on log cum haz scale)
+  int<lower=1,upper=4> type;
 
   // data for baseline hazard
   //   exp model:
@@ -219,13 +232,13 @@ parameters {
   vector[K] z_beta;
 
   // intercept
-  real gamma;
+  real gamma[has_intercept == 1];
 
   // unscaled basehaz parameters
   //   exp model: df = 0, ie. no aux parameter
   //   wei model: df = 1, ie. 1 shape parameter
   //   fpm model: df = number of basis terms, ie. I-spline coefs
-  vector<lower=0>[df] z_basehaz_coefs;
+  vector<lower=basehaz_coefs_lb(type)>[df] z_basehaz_coefs;
 
   // parameters for priors
   real<lower=0> global[hs];
@@ -241,7 +254,7 @@ transformed parameters {
   vector[K] beta;
 
   // basehaz parameters
-  vector<lower=0>[df] basehaz_coefs;
+  vector[df] basehaz_coefs;
 
   // define log hazard ratios
   beta = make_beta(z_beta, prior_dist, prior_mean,
@@ -263,11 +276,17 @@ model {
   vector[nrows] log_surv_beg; // log surv at t_beg for each row of data
 
   // linear predictor
-  if (K > 0) eta = x * beta;
-  else eta = rep_vector(0.0, nrows);
+  if (K > 0) {
+    eta = x * beta;
+  }
+  else {
+    eta = rep_vector(0.0, nrows);
+  }
 
   // add intercept
-  //eta = eta + gamma;
+  if (has_intercept == 1) {
+    eta = eta + gamma[1];
+  }
 
   // log basehaz and log basesurv for each row of data
   if (type == 1) { // exponential model
@@ -286,14 +305,21 @@ model {
         log_surv_beg[n] = - (t_beg[n] ^ basehaz_coefs[1]) * exp_eta[n];
     }
   }
-  else if (type == 3) { // fpm model
+  else if (type == 3) { // fpm model -- cum haz scale
+    vector[nrows] exp_eta = exp(eta);
+    log_haz = log(basehaz_dx_end * basehaz_coefs) + eta;
+    log_surv_end = - (basehaz_x_end * basehaz_coefs) .* exp_eta;
+    if (delayed == 1)
+      log_surv_beg = - (basehaz_x_beg * basehaz_coefs) .* exp_eta;
+  }	
+  else if (type == 4) { // fpm2 model -- log cum haz scale
     log_haz = - log(t_end) + log(basehaz_dx_end * basehaz_coefs) +
       (basehaz_x_end * basehaz_coefs);
     log_surv_end = - exp(basehaz_x_end * basehaz_coefs + eta);
     if (delayed == 1)
       log_surv_beg = - exp(basehaz_x_beg * basehaz_coefs + eta);
   }
-
+	
   // correct log likelihood for delayed entry
   if (delayed == 1) {
     log_surv_end = log_surv_end - log_surv_beg;
@@ -309,7 +335,10 @@ model {
           local, global, mix, ool, slab_df, caux);
 
   // log prior for intercept
-  target += normal_lpdf(gamma | prior_mean_for_intercept, prior_scale_for_intercept);
+  if (has_intercept == 1) {
+    target += normal_lpdf(gamma[1] | prior_mean_for_intercept,
+                                     prior_scale_for_intercept);
+  }
 
   // log priors for baseline hazard parameters
   if (type > 1) {
